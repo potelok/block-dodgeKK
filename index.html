@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>블록 피하기</title>
+<style>
+  body { margin: 0; height: 100vh; display: flex; justify-content: center; align-items: center; background: #0b1030; }
+  canvas { border-radius: 8px; box-shadow: 0 0 30px #000a; }
+</style>
+</head>
+<body>
+<canvas id="c" width="500" height="420"></canvas>
+<script>
+const W = 500, H = 420, CX = 250, PZ = 0.88, FONT = '"Malgun Gothic", sans-serif';
+const ctx = document.getElementById('c').getContext('2d');
+
+// 원근: z는 0(먼 곳, 위) ~ 1(가까운 곳, 아래). 제곱이라 가까울수록 빨라 보인다.
+const zToY = z => H * z * z;
+const halfW = y => 100 + 160 * y / H;          // 도로 반폭: 위 100px → 아래 260px
+const laneW = y => halfW(y) * 2 / 3;
+const laneX = (lane, y) => CX + (lane - 1) * laneW(y);
+const PY = zToY(PZ);
+
+function levelParams(L) {
+  return {
+    v: Math.min(0.90, 0.40 + 0.05 * (L - 1)),           // 낙하 속도 (z/초)
+    gap: Math.max(0.45, 1.10 - 0.08 * (L - 1)),         // 줄 간격 (초)
+    two: L < 3 ? 0 : Math.min(0.60, 0.25 + 0.05 * (L - 3)) // 한 줄에 2개 나올 확률
+  };
+}
+const hit = (px, lane, z) => Math.abs(px - lane) < 0.6 && z > PZ - 0.06 && z < PZ + 0.04;
+function makeRow(two) {
+  const open = Math.floor(Math.random() * 3);
+  return two ? [0, 1, 2].filter(l => l !== open) : [open]; // 3개(길 막힘)는 만들지 않는다
+}
+
+// 상태
+let state = 'ready', t = 0, score = 0, level = 1, lane = 1, px = 1;
+let blocks = [], spawnT = 0, dash = 0, shake = 0, flash = 0, overT = 0, parts = [], newBest = false;
+let best = Number(localStorage.getItem('dodgeBest')) || 0;
+
+const lights = [];
+for (let i = 0; i < 60; i++) {
+  const y = 40 + Math.random() * 280, side = Math.random() < 0.5 ? -1 : 1, edge = halfW(y) + 14;
+  lights.push({ x: CX + side * (edge + Math.random() * Math.max(0, CX - edge)), y, ph: Math.random() * 6 });
+}
+
+// 소리 (Web Audio, 첫 스페이스에서 생성 — 크롬은 키 입력 전 소리를 막음)
+let ac;
+const VOL = 0.15;
+function sfx(type) {
+  if (!ac) return;
+  const o = ac.createOscillator(), g = ac.createGain(), n = ac.currentTime;
+  const dur = { move: 0.05, hit: 0.3, up: 0.25 }[type];
+  o.connect(g); g.connect(ac.destination);
+  if (type === 'move') o.frequency.value = 600;
+  if (type === 'hit') { o.type = 'sawtooth'; o.frequency.setValueAtTime(150, n); o.frequency.exponentialRampToValueAtTime(40, n + dur); }
+  if (type === 'up') { o.type = 'square'; o.frequency.setValueAtTime(500, n); o.frequency.setValueAtTime(800, n + 0.1); }
+  g.gain.setValueAtTime(type === 'hit' ? VOL * 2 : VOL, n);
+  g.gain.exponentialRampToValueAtTime(0.001, n + dur);
+  o.start(n); o.stop(n + dur);
+}
+
+function reset() {
+  score = 0; level = 1; lane = 1; px = 1; blocks = []; spawnT = 0.5; parts = []; newBest = false; overT = 0;
+  state = 'playing';
+}
+
+function crash(b) {
+  state = 'over'; shake = 0.3; flash = 0.5;
+  const y = zToY(b.z), x = laneX(b.lane, y);
+  for (let i = 0; i < 20; i++) {
+    const a = Math.random() * Math.PI * 2, sp = 100 + Math.random() * 200;
+    parts.push({ x, y: y - 10, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 150, life: 0.8 });
+  }
+  sfx('hit');
+  if (Math.floor(score) > best) {
+    best = Math.floor(score); newBest = true;
+    localStorage.setItem('dodgeBest', best);
+  }
+}
+
+function update(dt) {
+  t += dt;
+  px += (lane - px) * Math.min(1, dt * 20);   // 약 0.15초에 목표 차선 도착
+  shake = Math.max(0, shake - dt);
+  flash = Math.max(0, flash - dt);
+  for (const p of parts) { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 600 * dt; p.life -= dt; }
+  parts = parts.filter(p => p.life > 0);
+  if (state === 'over') overT += dt;
+  if (state !== 'playing') return;
+
+  score += dt * 10;
+  const L = 1 + Math.floor(score / 100);
+  if (L > level) { level = L; sfx('up'); }
+  const p = levelParams(level);
+  dash = (dash + p.v * dt * 8) % 1;
+
+  spawnT -= dt;
+  if (spawnT <= 0) {
+    spawnT = p.gap;
+    for (const l of makeRow(Math.random() < p.two)) blocks.push({ lane: l, z: 0 });
+  }
+  for (const b of blocks) {
+    b.z += p.v * dt;
+    if (hit(px, b.lane, b.z)) return crash(b);
+  }
+  blocks = blocks.filter(b => b.z < 1.1);
+}
+
+// 그리기
+function rr(x, y, w, h, r) { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); }
+
+function drawScene() {
+  const sky = ctx.createLinearGradient(0, 0, 0, H);
+  sky.addColorStop(0, '#0f2a8a'); sky.addColorStop(1, '#1f4fd8');
+  ctx.fillStyle = sky; ctx.fillRect(-20, -20, W + 40, H + 40);
+  for (const l of lights) {
+    ctx.fillStyle = `rgba(120,210,255,${0.5 + 0.4 * Math.sin(t * 2 + l.ph)})`;
+    ctx.fillRect(l.x, l.y, 5, 5);
+  }
+  ctx.fillStyle = '#1c2142';
+  ctx.beginPath(); ctx.moveTo(CX - 100, 0); ctx.lineTo(CX + 100, 0); ctx.lineTo(CX + 260, H); ctx.lineTo(CX - 260, H); ctx.fill();
+  ctx.strokeStyle = '#49a8ff'; ctx.lineWidth = 6;
+  for (const s of [-1, 1]) { ctx.beginPath(); ctx.moveTo(CX + s * 100, 0); ctx.lineTo(CX + s * 260, H); ctx.stroke(); }
+  // 흐르는 차선 점선
+  ctx.strokeStyle = '#5a6184';
+  const N = 8;
+  for (let k = 0; k < N; k++) {
+    const y0 = zToY((k + dash) / N), y1 = zToY((k + dash + 0.5) / N);
+    ctx.lineWidth = 1 + 3 * y0 / H;
+    for (const s of [-1, 1]) {
+      ctx.beginPath(); ctx.moveTo(CX + s * halfW(y0) / 3, y0); ctx.lineTo(CX + s * halfW(y1) / 3, y1); ctx.stroke();
+    }
+  }
+}
+
+function drawBlock(b) {
+  const y = zToY(b.z), s = halfW(y) / 260, x = laneX(b.lane, y), w = laneW(y) * 0.45, h = w * 0.32, top = w * 0.14;
+  ctx.fillStyle = 'rgba(0,0,0,.3)';
+  ctx.beginPath(); ctx.ellipse(x, y + 3 * s, w * 0.55, 5 * s, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = '#d81f45'; rr(x - w / 2, y - h, w, h, 4 * s); ctx.fill();
+  ctx.fillStyle = '#ff4d6d'; rr(x - w / 2, y - h - top, w, top + 4 * s, 4 * s); ctx.fill();
+}
+
+function drawPlayer() {
+  const x = laneX(px, PY), bob = state === 'playing' ? Math.abs(Math.sin(t * 12)) * 5 : 0;
+  ctx.fillStyle = 'rgba(0,0,0,.35)';
+  ctx.beginPath(); ctx.ellipse(x, PY + 4, 22 - bob, 6, 0, 0, 7); ctx.fill();
+  ctx.save();
+  ctx.translate(x, PY - bob);
+  ctx.rotate((lane - px) * 0.5);                    // 옮겨 가는 방향으로 기울기
+  ctx.fillStyle = '#0d3ea8';
+  for (const s of [-1, 1]) { ctx.beginPath(); ctx.ellipse(s * 8, -4, 7, 5, 0, 0, 7); ctx.fill(); }
+  const g = ctx.createRadialGradient(-6, -34, 3, 0, -26, 24);
+  g.addColorStop(0, '#6fb0ff'); g.addColorStop(1, '#1557d6');
+  ctx.fillStyle = g; rr(-14, -28, 28, 24, 10); ctx.fill();
+  ctx.beginPath(); ctx.arc(0, -38, 17, 0, 7); ctx.fill();
+  ctx.fillStyle = '#fff';
+  for (const s of [-1, 1]) { ctx.beginPath(); ctx.arc(s * 19, -18, 5, 0, 7); ctx.fill(); }
+  ctx.fillStyle = 'rgba(255,255,255,.5)';
+  ctx.beginPath(); ctx.ellipse(-7, -45, 5, 3, -0.5, 0, 7); ctx.fill();
+  ctx.restore();
+}
+
+function drawBox(x, label, value, blink) {
+  ctx.fillStyle = 'rgba(10,20,60,.85)'; rr(x, 10, 104, 48, 10); ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.textAlign = x < CX ? 'left' : 'right';
+  const tx = x < CX ? x + 12 : x + 92;
+  ctx.font = `bold 11px ${FONT}`; ctx.fillText(label, tx, 26);
+  if (!blink) { ctx.font = `bold 26px ${FONT}`; ctx.fillText(String(value).padStart(4, '0'), tx, 52); }
+}
+
+function drawHud() {
+  drawBox(10, 'SCORE', Math.floor(score), flash > 0 && Math.floor(flash * 12) % 2 === 0);
+  drawBox(386, 'BEST', best, false);
+  ctx.textAlign = 'left'; ctx.fillStyle = '#9cc8ff'; ctx.font = `bold 12px ${FONT}`;
+  ctx.fillText(`LEVEL ${level}`, 16, 74);
+  ctx.fillStyle = 'rgba(10,20,60,.8)'; rr(CX - 140, 382, 280, 30, 15); ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.font = `14px ${FONT}`;
+  ctx.fillText('←   좌우로 움직여 블록을 피하세요!   →', CX, 402);
+}
+
+function drawOverlay(lines) {
+  ctx.fillStyle = 'rgba(5,10,40,.6)'; ctx.fillRect(0, 0, W, H);
+  ctx.textAlign = 'center';
+  lines.forEach(([text, size, color], i) => {
+    ctx.fillStyle = color; ctx.font = `bold ${size}px ${FONT}`; ctx.fillText(text, CX, 150 + i * 42);
+  });
+}
+
+function draw() {
+  ctx.save();
+  if (shake > 0) { const a = 8 * shake / 0.3; ctx.translate((Math.random() * 2 - 1) * a, (Math.random() * 2 - 1) * a); }
+  drawScene();
+  blocks.sort((a, b) => a.z - b.z);
+  blocks.filter(b => b.z <= PZ).forEach(drawBlock);   // 플레이어 뒤쪽 블록
+  drawPlayer();
+  blocks.filter(b => b.z > PZ).forEach(drawBlock);    // 플레이어 앞쪽 블록
+  for (const p of parts) { ctx.globalAlpha = p.life / 0.8; ctx.fillStyle = '#ff4d6d'; ctx.fillRect(p.x - 3, p.y - 3, 6, 6); }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+  drawHud();
+  if (state === 'ready') drawOverlay([['블록 피하기', 34, '#fff'], ['스페이스바로 시작', 18, '#9cc8ff']]);
+  if (state === 'over' && overT > 0.4) drawOverlay([
+    ['GAME OVER', 34, '#ff4d6d'], [`점수 ${Math.floor(score)}`, 20, '#fff'],
+    [newBest ? 'NEW BEST!' : '', 20, '#ffd54a'], ['스페이스로 다시 시작', 16, '#9cc8ff']]);
+}
+
+addEventListener('keydown', e => {
+  if (e.code === 'Space') {
+    e.preventDefault();
+    if (state === 'playing' || (state === 'over' && overT < 0.4)) return;
+    ac = ac || new AudioContext();
+    reset();
+    return;
+  }
+  const d = e.code === 'ArrowLeft' ? -1 : e.code === 'ArrowRight' ? 1 : 0;
+  if (!d) return;
+  e.preventDefault();
+  if (e.repeat || state !== 'playing' || lane + d < 0 || lane + d > 2) return;
+  lane += d; sfx('move');
+});
+
+let last = performance.now();
+function frame(now) {
+  update(Math.min(0.05, (now - last) / 1000));      // 탭 전환 후 순간이동 방지
+  last = now;
+  draw();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+// 자체 검사: 콘솔에 Assertion failed가 없으면 통과
+console.assert(hit(1, 1, PZ) && !hit(0, 1, PZ) && hit(1.5, 1, PZ) && hit(1.5, 2, PZ) && !hit(1, 1, 0.5), 'hit 판정');
+const near = (a, b) => Math.abs(a - b) < 1e-9, p5 = levelParams(5), p10 = levelParams(10);
+console.assert(near(p5.v, 0.6) && near(p5.gap, 0.78) && near(p5.two, 0.35) && near(p10.v, 0.85) && near(p10.gap, 0.45) && near(p10.two, 0.6), 'levelParams');
+for (let i = 0; i < 200; i++) {
+  const r = makeRow(i % 2 === 0);
+  console.assert(r.length === (i % 2 === 0 ? 2 : 1) && new Set(r).size === r.length && r.every(l => l >= 0 && l <= 2), 'makeRow');
+}
+</script>
+</body>
+</html>
