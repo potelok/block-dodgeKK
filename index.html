@@ -2,24 +2,37 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
 <title>블록 피하기</title>
 <style>
-  body { margin: 0; height: 100vh; display: flex; justify-content: center; align-items: center; background: #0b1030; }
-  canvas { border-radius: 8px; box-shadow: 0 0 30px #000a; }
+  body { margin: 0; overflow: hidden; background: #2f7d3a;
+         touch-action: none; user-select: none; -webkit-user-select: none; } /* 터치할 때 스크롤·확대·글자 선택 막기 */
+  canvas { display: block; }
 </style>
 </head>
 <body>
 <canvas id="c" width="500" height="420"></canvas>
 <script>
-const W = 500, H = 420, CX = 250, PZ = 0.88, FONT = '"Malgun Gothic", sans-serif';
-const ctx = document.getElementById('c').getContext('2d');
+const PZ = 0.88, FONT = '"Malgun Gothic", sans-serif';
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+let W, H, CX, PY;   // 화면 크기에 따라 resize()가 정한다
 
 // 원근: z는 0(먼 곳, 위) ~ 1(가까운 곳, 아래). 제곱이라 가까울수록 빨라 보인다.
 const zToY = z => H * z * z;
 const halfW = y => 100 + 160 * y / H;          // 도로 반폭: 위 100px → 아래 260px
 const laneW = y => halfW(y) * 2 / 3;
 const laneX = (lane, y) => CX + (lane - 1) * laneW(y);
-const PY = zToY(PZ);
+
+// 화면 가득 채우기: 500x420을 짧은 쪽 기준으로 키우고, 남는 쪽(세로 폰은 위아래, 넓은 PC는 양옆)은 장면을 늘린다
+function resize() {
+  const dpr = devicePixelRatio || 1, s = Math.min(innerWidth / 500, innerHeight / 420);
+  W = innerWidth / s; H = innerHeight / s; CX = W / 2; PY = zToY(PZ);
+  cv.width = innerWidth * dpr; cv.height = innerHeight * dpr;
+  cv.style.width = innerWidth + 'px'; cv.style.height = innerHeight + 'px';
+  ctx.setTransform(s * dpr, 0, 0, s * dpr, 0, 0);
+}
+addEventListener('resize', resize);
+resize();
 
 function levelParams(L) {
   return {
@@ -38,12 +51,6 @@ function makeRow(two) {
 let state = 'ready', t = 0, score = 0, level = 1, lane = 1, px = 1;
 let blocks = [], spawnT = 0, dash = 0, shake = 0, flash = 0, overT = 0, parts = [], newBest = false;
 let best = Number(localStorage.getItem('dodgeBest')) || 0;
-
-const lights = [];
-for (let i = 0; i < 60; i++) {
-  const y = 40 + Math.random() * 280, side = Math.random() < 0.5 ? -1 : 1, edge = halfW(y) + 14;
-  lights.push({ x: CX + side * (edge + Math.random() * Math.max(0, CX - edge)), y, ph: Math.random() * 6 });
-}
 
 // 소리 (Web Audio, 첫 스페이스에서 생성 — 크롬은 키 입력 전 소리를 막음)
 let ac;
@@ -111,27 +118,36 @@ function update(dt) {
 // 그리기
 function rr(x, y, w, h, r) { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); }
 
-function drawScene() {
-  const sky = ctx.createLinearGradient(0, 0, 0, H);
-  sky.addColorStop(0, '#0f2a8a'); sky.addColorStop(1, '#1f4fd8');
-  ctx.fillStyle = sky; ctx.fillRect(-20, -20, W + 40, H + 40);
-  for (const l of lights) {
-    ctx.fillStyle = `rgba(120,210,255,${0.5 + 0.4 * Math.sin(t * 2 + l.ph)})`;
-    ctx.fillRect(l.x, l.y, 5, 5);
+function drawTree(x, y, s) {
+  ctx.fillStyle = 'rgba(0,0,0,.2)';
+  ctx.beginPath(); ctx.ellipse(x, y, 26 * s, 7 * s, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = '#6b4423'; ctx.fillRect(x - 4 * s, y - 34 * s, 8 * s, 34 * s);
+  ctx.fillStyle = '#23703a';
+  for (const [dx, dy, r] of [[-14, -40, 17], [14, -40, 17], [0, -56, 22]]) {
+    ctx.beginPath(); ctx.arc(x + dx * s, y + dy * s, r * s, 0, 7); ctx.fill();
   }
-  ctx.fillStyle = '#1c2142';
+  ctx.fillStyle = '#3c9a4c';
+  ctx.beginPath(); ctx.arc(x - 6 * s, y - 62 * s, 10 * s, 0, 7); ctx.fill();
+}
+
+function drawScene() {
+  const grass = ctx.createLinearGradient(0, 0, 0, H);
+  grass.addColorStop(0, '#2f7d3a'); grass.addColorStop(1, '#5cb85c');
+  ctx.fillStyle = grass; ctx.fillRect(-20, -20, W + 40, H + 40);
+  ctx.fillStyle = '#3d424e';
   ctx.beginPath(); ctx.moveTo(CX - 100, 0); ctx.lineTo(CX + 100, 0); ctx.lineTo(CX + 260, H); ctx.lineTo(CX - 260, H); ctx.fill();
-  ctx.strokeStyle = '#49a8ff'; ctx.lineWidth = 6;
+  ctx.strokeStyle = '#f2f2f2'; ctx.lineWidth = 6;
   for (const s of [-1, 1]) { ctx.beginPath(); ctx.moveTo(CX + s * 100, 0); ctx.lineTo(CX + s * 260, H); ctx.stroke(); }
-  // 흐르는 차선 점선
-  ctx.strokeStyle = '#5a6184';
+  // 흐르는 차선 점선과 가로수 (같은 속도로 다가온다)
   const N = 8;
   for (let k = 0; k < N; k++) {
     const y0 = zToY((k + dash) / N), y1 = zToY((k + dash + 0.5) / N);
-    ctx.lineWidth = 1 + 3 * y0 / H;
+    ctx.strokeStyle = '#d6d9e0'; ctx.lineWidth = 1 + 3 * y0 / H;
     for (const s of [-1, 1]) {
       ctx.beginPath(); ctx.moveTo(CX + s * halfW(y0) / 3, y0); ctx.lineTo(CX + s * halfW(y1) / 3, y1); ctx.stroke();
     }
+    const sc = halfW(y0) / 260;
+    for (const s of [-1, 1]) drawTree(CX + s * (halfW(y0) + 45 * sc), y0, sc);
   }
 }
 
@@ -173,20 +189,23 @@ function drawBox(x, label, value, blink) {
 
 function drawHud() {
   drawBox(10, 'SCORE', Math.floor(score), flash > 0 && Math.floor(flash * 12) % 2 === 0);
-  drawBox(386, 'BEST', best, false);
+  drawBox(W - 114, 'BEST', best, false);
   ctx.textAlign = 'left'; ctx.fillStyle = '#9cc8ff'; ctx.font = `bold 12px ${FONT}`;
   ctx.fillText(`LEVEL ${level}`, 16, 74);
-  ctx.fillStyle = 'rgba(10,20,60,.8)'; rr(CX - 140, 382, 280, 30, 15); ctx.fill();
+  ctx.fillStyle = 'rgba(10,20,60,.8)'; rr(CX - 140, H - 38, 280, 30, 15); ctx.fill();
   ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.font = `14px ${FONT}`;
-  ctx.fillText('←   좌우로 움직여 블록을 피하세요!   →', CX, 402);
+  ctx.fillText('←   좌우로 움직여 블록을 피하세요!   →', CX, H - 18);
 }
 
-function drawOverlay(lines) {
+function drawOverlay(lines, button) {
   ctx.fillStyle = 'rgba(5,10,40,.6)'; ctx.fillRect(0, 0, W, H);
   ctx.textAlign = 'center';
   lines.forEach(([text, size, color], i) => {
-    ctx.fillStyle = color; ctx.font = `bold ${size}px ${FONT}`; ctx.fillText(text, CX, 150 + i * 42);
+    ctx.fillStyle = color; ctx.font = `bold ${size}px ${FONT}`; ctx.fillText(text, CX, H / 2 - 80 + i * 42);
   });
+  const y = H / 2 - 80 + lines.length * 42;   // 화면 어디를 눌러도 시작되므로 버튼은 그림만 그린다
+  ctx.fillStyle = '#ff4d6d'; rr(CX - 80, y - 28, 160, 44, 22); ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.font = `bold 20px ${FONT}`; ctx.fillText(button, CX, y + 1);
 }
 
 function draw() {
@@ -201,25 +220,36 @@ function draw() {
   ctx.globalAlpha = 1;
   ctx.restore();
   drawHud();
-  if (state === 'ready') drawOverlay([['블록 피하기', 34, '#fff'], ['스페이스바로 시작', 18, '#9cc8ff']]);
+  if (state === 'ready') drawOverlay([['블록 피하기', 34, '#fff'], ['스페이스바 또는 화면 터치', 16, '#9cc8ff']], '▶ 시작');
   if (state === 'over' && overT > 0.4) drawOverlay([
     ['GAME OVER', 34, '#ff4d6d'], [`점수 ${Math.floor(score)}`, 20, '#fff'],
-    [newBest ? 'NEW BEST!' : '', 20, '#ffd54a'], ['스페이스로 다시 시작', 16, '#9cc8ff']]);
+    [newBest ? 'NEW BEST!' : '', 20, '#ffd54a']], '다시 시작');
+}
+
+function tryStart() {
+  if (state === 'playing' || (state === 'over' && overT < 0.4)) return;
+  ac = ac || new AudioContext();
+  ac.resume();   // 휴대폰은 터치 순간에 소리를 깨워야 한다
+  reset();
+}
+function move(d) {
+  if (state !== 'playing' || lane + d < 0 || lane + d > 2) return;
+  lane += d; sfx('move');
 }
 
 addEventListener('keydown', e => {
-  if (e.code === 'Space') {
-    e.preventDefault();
-    if (state === 'playing' || (state === 'over' && overT < 0.4)) return;
-    ac = ac || new AudioContext();
-    reset();
-    return;
-  }
+  if (e.code === 'Space') { e.preventDefault(); tryStart(); return; }
   const d = e.code === 'ArrowLeft' ? -1 : e.code === 'ArrowRight' ? 1 : 0;
   if (!d) return;
   e.preventDefault();
-  if (e.repeat || state !== 'playing' || lane + d < 0 || lane + d > 2) return;
-  lane += d; sfx('move');
+  if (!e.repeat) move(d);
+});
+
+// 터치·마우스: 시작 전이면 시작, 게임 중이면 화면 왼쪽 반 = 왼쪽, 오른쪽 반 = 오른쪽
+addEventListener('pointerdown', e => {
+  e.preventDefault();
+  if (state !== 'playing') return tryStart();
+  move(e.clientX < innerWidth / 2 ? -1 : 1);
 });
 
 let last = performance.now();
