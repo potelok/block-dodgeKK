@@ -25,7 +25,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - game.py 화면 없이 확인: 환경 변수 `SDL_VIDEODRIVER=dummy`, `SDL_AUDIODRIVER=dummy`를 설정한다. 그다음 `import game`을 하고 `handle_key()`, `update(1/60)`, `draw()`를 직접 부르고 `pygame.image.save(game.screen, ...)`로 화면을 저장한다. 실제 BEST가 바뀌지 않게 `game.BEST_FILE`은 임시 경로로 바꿔 둔다.
 
 ## 코드 구조 (여러 곳을 읽어야 보이는 것)
-- 화면 크기(index.html만): `W`, `H`, `CX`, `PY`는 고정값이 아니다. `resize()`가 500x420을 짧은 쪽 기준으로 키우고, 남는 쪽은 장면을 늘려서 화면을 가득 채운다(세로 폰은 W=500에 H가 길어지고, 넓은 PC는 H=420에 W가 넓어진다). 화면 요소 위치는 숫자로 고정하지 말고 `W`, `H`, `CX` 기준으로 정한다. game.py는 500x420 고정 창에 밤 도시 배경이고, index.html은 가로수 길(`drawTree`, 점선과 같은 `dash` 위치로 흐름)이다.
+- 화면 크기(index.html만): 게임 안 좌표는 480x640(3:4) 고정이다. `resize()`는 이 화면을 들어가는 만큼 통째로 키운다(세로 폰은 가로가, PC는 세로가 꽉 참). 가운데 정렬은 CSS(body flex)가 한다. 화면 요소 위치는 숫자로 고정하지 말고 `W`, `H`, `CX` 기준으로 정한다. game.py는 500x420 고정 창에 밤 도시 배경이고, index.html은 가로수 길(`drawTree`, 점선과 같은 `dash` 위치로 흐름)이다.
 - 원근: 깊이 `z`는 0(위, 먼 곳)부터 1(아래, 가까운 곳)까지다. 화면 y는 `zToY = H·z²`, 도로 반폭은 `halfW(y)`로 y에 비례한다. 차선 x는 `laneX(lane, y)`이다. 블록 크기도 `laneW(y)`를 따른다.
 - 플레이어: `lane`은 목표 차선(정수), `px`는 실제 위치(소수)다. `px`가 `lane`을 지수적으로 따라가며(약 0.15초) 미끄러진다. 충돌 판정은 `px` 기준이라 두 차선 사이에 걸치면 양쪽 블록에 모두 맞는다.
 - 흐름: `requestAnimationFrame` → `update(dt)` → `draw()`. `dt`는 최대 0.05초로 자른다.

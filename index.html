@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
 <title>블록 피하기</title>
 <style>
-  body { margin: 0; overflow: hidden; background: #2f7d3a;
+  body { margin: 0; overflow: hidden; background: #2f7d3a; height: 100vh; height: 100dvh;
+         display: flex; justify-content: center; align-items: center;
          touch-action: none; user-select: none; -webkit-user-select: none; } /* 터치할 때 스크롤·확대·글자 선택 막기 */
   canvas { display: block; }
 </style>
@@ -15,7 +16,7 @@
 <script>
 const PZ = 0.88, FONT = '"Malgun Gothic", sans-serif';
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
-let W, H, CX, PY;   // 화면 크기에 따라 resize()가 정한다
+const W = 480, H = 640, CX = W / 2;   // 3:4 게임 화면
 
 // 원근: z는 0(먼 곳, 위) ~ 1(가까운 곳, 아래). 제곱이라 가까울수록 빨라 보인다.
 const zToY = z => H * z * z;
@@ -23,12 +24,13 @@ const halfW = y => 100 + 160 * y / H;          // 도로 반폭: 위 100px → �
 const laneW = y => halfW(y) * 2 / 3;
 const laneX = (lane, y) => CX + (lane - 1) * laneW(y);
 
-// 화면 가득 채우기: 500x420을 짧은 쪽 기준으로 키우고, 남는 쪽(세로 폰은 위아래, 넓은 PC는 양옆)은 장면을 늘린다
+const PY = zToY(PZ);
+
+// 3:4 화면을 들어가는 만큼 키운다: 세로 폰은 가로가, 가로로 긴 PC는 세로가 꽉 찬다(가운데 정렬은 CSS)
 function resize() {
-  const dpr = devicePixelRatio || 1, s = Math.min(innerWidth / 500, innerHeight / 420);
-  W = innerWidth / s; H = innerHeight / s; CX = W / 2; PY = zToY(PZ);
-  cv.width = innerWidth * dpr; cv.height = innerHeight * dpr;
-  cv.style.width = innerWidth + 'px'; cv.style.height = innerHeight + 'px';
+  const dpr = devicePixelRatio || 1, s = Math.min(innerWidth / W, innerHeight / H);
+  cv.width = W * s * dpr; cv.height = H * s * dpr;
+  cv.style.width = W * s + 'px'; cv.style.height = H * s + 'px';
   ctx.setTransform(s * dpr, 0, 0, s * dpr, 0, 0);
 }
 addEventListener('resize', resize);
